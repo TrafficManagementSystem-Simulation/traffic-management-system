@@ -1,13 +1,353 @@
 {% extends "base.html" %}
 {% block title %}Simulation{% endblock %}
 {% block content %}
-<h2>Simulation</h2>
-<p class="panel">The analyst workbench page arrives in Sprint 2. For the Sprint 1 demo, use the <a href="/docs">API page</a>:</p>
-<ol>
-  <li>Sign in with <code>POST /api/v1/auth/login</code> as <code>analyst</code> / <code>analyst123</code>, then press <strong>Authorize</strong> and paste the token.</li>
-  <li><code>POST /api/v1/simulation/networks/import-sample</code> with <code>{"name": "single_intersection"}</code>.</li>
-  <li><code>POST /api/v1/simulation/runs</code> with <code>{"networkId": 1, "durationSeconds": 3600, "seed": 42}</code>.</li>
-  <li>Read the delay, queue length and throughput in the response.</li>
-</ol>
-<p class="muted">Simulation results are estimates and do not replace formal traffic-engineering sign-off.</p>
+<h2>Simulation — Analyst Workbench</h2>
+
+<!-- ── Run a simulation ── -->
+<section class="panel" id="run-panel">
+  <h3 style="margin-top:0">Run simulation</h3>
+  <div class="row">
+    <label>Network
+      <select id="run-network"><option value="">— select —</option></select>
+    </label>
+    <label>Duration (s)
+      <input id="run-duration" type="number" value="3600" min="60" max="86400" style="width:100px">
+    </label>
+    <label>Seed
+      <input id="run-seed" type="number" value="42" style="width:80px">
+    </label>
+    <label>Demand scale
+      <input id="run-demand" type="number" value="1.0" step="0.1" min="0.1" max="5" style="width:80px">
+    </label>
+    <button id="run-btn" type="button">Run</button>
+  </div>
+  <div id="run-result" hidden style="margin-top:12px"></div>
+</section>
+
+<!-- ── Compare scenarios ── -->
+<section class="panel" id="compare-panel" style="margin-top:16px">
+  <h3 style="margin-top:0">Compare scenarios</h3>
+  <div class="row">
+    <label>Network
+      <select id="cmp-network"><option value="">— select —</option></select>
+    </label>
+    <label>Duration (s)
+      <input id="cmp-duration" type="number" value="3600" min="60" max="86400" style="width:100px">
+    </label>
+    <label>Seed
+      <input id="cmp-seed" type="number" value="42" style="width:80px">
+    </label>
+  </div>
+  <div id="scenarios-list" style="margin-top:10px"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="add-scenario-btn" type="button" class="secondary">+ Add scenario</button>
+    <button id="compare-btn" type="button">Compare</button>
+  </div>
+  <div id="compare-result" hidden style="margin-top:12px"></div>
+</section>
+
+<!-- ── Replay ── -->
+<section class="panel" id="replay-panel" style="margin-top:16px">
+  <h3 style="margin-top:0">Replay run</h3>
+  <div class="row">
+    <label>Run ID
+      <input id="replay-run-id" type="number" min="1" style="width:90px" placeholder="e.g. 1">
+    </label>
+    <label>Speed
+      <select id="replay-speed">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+        <option value="8">8×</option>
+      </select>
+    </label>
+    <button id="replay-btn" type="button">Load replay</button>
+    <button id="replay-play-btn" type="button" class="secondary" hidden>▶ Play</button>
+    <button id="replay-stop-btn" type="button" class="secondary" hidden>■ Stop</button>
+  </div>
+  <div id="replay-info" hidden style="margin-top:8px;color:var(--muted);font-size:.9rem"></div>
+  <div id="replay-stage" hidden style="margin-top:10px;overflow-x:auto">
+    <canvas id="replay-canvas" width="700" height="220" style="border:1px solid var(--line);border-radius:6px;background:var(--panel)"></canvas>
+    <div style="margin-top:6px;font-size:.85rem;color:var(--muted)">t = <span id="replay-t">0</span>s &nbsp;|&nbsp; vehicles: <span id="replay-v">0</span></div>
+  </div>
+</section>
+
+<!-- ── Past runs table ── -->
+<section style="margin-top:24px">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <h3 style="margin:0">Past runs</h3>
+    <div class="row" style="margin:0">
+      <label style="font-size:.85rem">Network
+        <select id="filter-network" style="font-size:.85rem"><option value="">All</option></select>
+      </label>
+      <label style="font-size:.85rem">Sort by
+        <select id="filter-sort" style="font-size:.85rem">
+          <option value="newest">Newest first</option>
+          <option value="delay">Avg delay ↑</option>
+          <option value="throughput">Throughput ↓</option>
+        </select>
+      </label>
+      <button id="refresh-runs-btn" type="button" class="secondary" style="font-size:.85rem">Refresh</button>
+    </div>
+  </div>
+  <div id="runs-table-wrap" style="margin-top:8px">
+    <p class="muted">Sign in to view past runs.</p>
+  </div>
+</section>
+
+<!-- ── Past comparisons table ── -->
+<section style="margin-top:24px">
+  <h3 style="margin:0 0 8px">Past comparisons</h3>
+  <div id="comparisons-table-wrap"><p class="muted">Sign in to view past comparisons.</p></div>
+</section>
+
+<p class="muted" style="margin-top:24px;font-size:.85rem">Simulation results are estimates and do not replace formal traffic-engineering sign-off (RSK-005).</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Analyst Workbench (TMS-F-009–F-013, #38) ── */
+const api = TMS.api;
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// ── metric formatting ──
+const FMT = {
+  averageDelaySeconds:   {label:"Avg delay",   unit:"s",   better:"lower"},
+  averageQueueLength:    {label:"Avg queue",   unit:" veh",better:"lower"},
+  maxQueueLength:        {label:"Max queue",   unit:" veh",better:"lower"},
+  throughputPerHour:     {label:"Throughput",  unit:"/hr", better:"higher"},
+};
+function fmtMetrics(m) {
+  return Object.entries(FMT).map(([k,f]) =>
+    `<td>${m[k] != null ? (+m[k]).toFixed(2)+f.unit : "—"}</td>`).join("");
+}
+function metricHeaders() {
+  return Object.values(FMT).map(f=>`<th>${f.label}</th>`).join("");
+}
+
+// ── load networks into selects ──
+let networksCache = [];
+async function loadNetworks() {
+  try {
+    networksCache = await api("/api/v1/simulation/networks");
+    ["run-network","cmp-network","filter-network"].forEach(id => {
+      const sel = document.getElementById(id);
+      const isFilter = id === "filter-network";
+      const existing = isFilter ? '<option value="">All</option>' : '<option value="">— select —</option>';
+      sel.innerHTML = existing + networksCache.map(n =>
+        `<option value="${n.id}">${esc(n.name)} (#${n.id})</option>`).join("");
+    });
+  } catch(e) { /* not signed in yet */ }
+}
+
+// ── run simulation ──
+document.getElementById("run-btn").onclick = async () => {
+  const netId = +document.getElementById("run-network").value;
+  if (!netId) { TMS.toast("Select a network first", true); return; }
+  const body = {
+    networkId: netId,
+    durationSeconds: +document.getElementById("run-duration").value,
+    seed: +document.getElementById("run-seed").value,
+    demandScale: +document.getElementById("run-demand").value,
+  };
+  const btn = document.getElementById("run-btn");
+  btn.disabled = true; btn.textContent = "Running…";
+  try {
+    const r = await api("/api/v1/simulation/runs", {method:"POST", body});
+    const m = r.metrics;
+    document.getElementById("run-result").hidden = false;
+    document.getElementById("run-result").innerHTML = `
+      <p><strong>Run #${r.runId}</strong> complete</p>
+      <table><thead><tr><th>Run</th>${metricHeaders()}<th>Sim time</th></tr></thead>
+      <tbody><tr><td>#${r.runId}</td>${fmtMetrics(m)}<td>${m.runSeconds}s</td></tr></tbody></table>`;
+    loadRunsTable();
+  } catch(e) { TMS.toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = "Run"; }
+};
+
+// ── scenario comparison ──
+let scenarioCount = 0;
+function addScenario(name="") {
+  scenarioCount++;
+  const id = scenarioCount;
+  const div = document.createElement("div");
+  div.id = `scenario-${id}`;
+  div.className = "row panel";
+  div.style = "margin:4px 0;padding:8px 12px;";
+  div.innerHTML = `
+    <label style="flex:1">Scenario name
+      <input class="sc-name" value="${esc(name)||"Scenario "+id}" style="width:100%">
+    </label>
+    <label>Demand scale
+      <input class="sc-demand" type="number" value="1.0" step="0.1" min="0.1" max="5" style="width:80px">
+    </label>
+    <button type="button" class="secondary" onclick="this.closest('[id]').remove()" style="align-self:end">✕</button>`;
+  document.getElementById("scenarios-list").appendChild(div);
+}
+addScenario("Baseline"); addScenario("Alternative");
+
+document.getElementById("add-scenario-btn").onclick = () => addScenario();
+
+document.getElementById("compare-btn").onclick = async () => {
+  const netId = +document.getElementById("cmp-network").value;
+  if (!netId) { TMS.toast("Select a network first", true); return; }
+  const scenarioDivs = document.querySelectorAll("#scenarios-list [id^='scenario-']");
+  if (scenarioDivs.length < 2) { TMS.toast("Add at least 2 scenarios", true); return; }
+  const scenarios = Array.from(scenarioDivs).map(d => ({
+    name: d.querySelector(".sc-name").value.trim() || "Scenario",
+    demandScale: +d.querySelector(".sc-demand").value,
+  }));
+  const body = {
+    networkId: netId,
+    durationSeconds: +document.getElementById("cmp-duration").value,
+    seed: +document.getElementById("cmp-seed").value,
+    demandScale: 1.0,
+    scenarios,
+  };
+  const btn = document.getElementById("compare-btn");
+  btn.disabled = true; btn.textContent = "Comparing…";
+  try {
+    const r = await api("/api/v1/simulation/comparisons", {method:"POST", body});
+    const rows = r.scenarios.map(s => {
+      const diff = r.differences[s.name] || {};
+      const cells = Object.keys(FMT).map(k => {
+        const pct = diff[k] ? diff[k].percent : null;
+        const better = FMT[k].better === "lower" ? pct < 0 : pct > 0;
+        const color = pct == null ? "" : better ? "color:var(--good)" : pct === 0 ? "" : "color:var(--bad)";
+        const pctTxt = pct != null ? ` <small style="${color}">(${pct>0?"+":""}${pct.toFixed(1)}%)</small>` : "";
+        return `<td>${s.metrics[k] != null ? (+s.metrics[k]).toFixed(2) : "—"}${pctTxt}</td>`;
+      }).join("");
+      return `<tr><td><strong>${esc(s.name)}</strong><br><small>Run #${s.runId}</small></td>${cells}</tr>`;
+    });
+    document.getElementById("compare-result").hidden = false;
+    document.getElementById("compare-result").innerHTML = `
+      <p><strong>Comparison #${r.comparisonId}</strong></p>
+      <table><thead><tr><th>Scenario</th>${metricHeaders()}</tr></thead><tbody>${rows.join("")}</tbody></table>
+      <p class="muted" style="font-size:.85rem">${esc(r.disclaimer||"")}</p>`;
+    loadRunsTable(); loadComparisonsTable();
+  } catch(e) { TMS.toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = "Compare"; }
+};
+
+// ── past runs table ──
+let runsCache = [];
+async function loadRunsTable() {
+  const wrap = document.getElementById("runs-table-wrap");
+  try {
+    const params = new URLSearchParams();
+    const net = document.getElementById("filter-network").value;
+    const sort = document.getElementById("filter-sort").value;
+    if (net) params.set("networkId", net);
+    if (sort) params.set("sortBy", sort);
+    runsCache = await api("/api/v1/simulation/runs?" + params.toString());
+    if (!runsCache.length) { wrap.innerHTML = '<p class="muted">No runs yet.</p>'; return; }
+    const rows = runsCache.map(r => `<tr>
+      <td>#${r.runId}</td>
+      <td>${esc(networksCache.find(n=>n.id===r.networkId)?.name||r.networkId)}</td>
+      ${fmtMetrics(r.metrics)}
+      <td>${r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}</td>
+      <td><button type="button" class="secondary" style="font-size:.8rem"
+        onclick="startReplay(${r.runId})">Replay</button></td>
+    </tr>`).join("");
+    wrap.innerHTML = `<table><thead><tr>
+      <th>Run</th><th>Network</th>${metricHeaders()}<th>Time</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch(e) { wrap.innerHTML = `<p class="muted">Could not load runs.</p>`; }
+}
+
+document.getElementById("refresh-runs-btn").onclick = loadRunsTable;
+document.getElementById("filter-network").onchange = loadRunsTable;
+document.getElementById("filter-sort").onchange = loadRunsTable;
+
+// ── past comparisons table ──
+async function loadComparisonsTable() {
+  const wrap = document.getElementById("comparisons-table-wrap");
+  try {
+    const list = await api("/api/v1/simulation/comparisons");
+    if (!list.length) { wrap.innerHTML = '<p class="muted">No comparisons yet.</p>'; return; }
+    const rows = list.map(c => `<tr>
+      <td>#${c.comparisonId}</td>
+      <td>${esc(networksCache.find(n=>n.id===c.networkId)?.name||c.networkId)}</td>
+      <td>${(c.scenarios||[]).map(esc).join(", ")}</td>
+      <td>${c.createdAt ? new Date(c.createdAt).toLocaleString() : "—"}</td>
+    </tr>`).join("");
+    wrap.innerHTML = `<table><thead><tr><th>#</th><th>Network</th><th>Scenarios</th><th>Time</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  } catch(e) { /* silent */ }
+}
+
+// ── replay ──
+let replayTimer = null;
+let replayFrames = [];
+let replayIdx = 0;
+
+function startReplay(runId) {
+  document.getElementById("replay-run-id").value = runId;
+  document.getElementById("replay-btn").click();
+}
+
+document.getElementById("replay-btn").onclick = async () => {
+  const runId = +document.getElementById("replay-run-id").value;
+  if (!runId) { TMS.toast("Enter a run ID", true); return; }
+  const speed = document.getElementById("replay-speed").value;
+  const btn = document.getElementById("replay-btn");
+  btn.disabled = true; btn.textContent = "Loading…";
+  stopReplay();
+  try {
+    const r = await api(`/api/v1/simulation/runs/${runId}/replay?speed=${speed}`);
+    replayFrames = r.frames || [];
+    replayIdx = 0;
+    document.getElementById("replay-info").hidden = false;
+    document.getElementById("replay-info").textContent =
+      `Run #${r.runId} · ${r.frameCount} frames · ${r.vehicleCount} vehicles · interval ${r.playbackIntervalSeconds}s`;
+    document.getElementById("replay-stage").hidden = false;
+    document.getElementById("replay-play-btn").hidden = false;
+    document.getElementById("replay-stop-btn").hidden = false;
+    drawFrame(replayFrames[0]);
+  } catch(e) { TMS.toast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = "Load replay"; }
+};
+
+function drawFrame(frame) {
+  if (!frame) return;
+  const canvas = document.getElementById("replay-canvas");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  // draw vehicles as dots
+  const veh = frame.vehicles || [];
+  document.getElementById("replay-t").textContent = frame.t;
+  document.getElementById("replay-v").textContent = veh.length;
+  veh.forEach((v, i) => {
+    const x = 40 + ((i * 37) % (W - 80));
+    const y = 40 + ((i * 53) % (H - 80));
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI*2);
+    ctx.fillStyle = "var(--accent)"; ctx.fill();
+  });
+  if (!veh.length) {
+    ctx.fillStyle = "var(--muted)"; ctx.font = "14px system-ui";
+    ctx.fillText("No vehicles in frame", W/2 - 70, H/2);
+  }
+}
+
+document.getElementById("replay-play-btn").onclick = () => {
+  if (replayTimer) return;
+  const interval = Math.max(50, (parseFloat(
+    document.getElementById("replay-info").textContent.match(/interval ([\d.]+)/)?.[1] || 1
+  ) * 1000));
+  replayTimer = setInterval(() => {
+    if (replayIdx >= replayFrames.length) { stopReplay(); return; }
+    drawFrame(replayFrames[replayIdx++]);
+  }, interval);
+};
+
+function stopReplay() { clearInterval(replayTimer); replayTimer = null; replayIdx = 0; }
+document.getElementById("replay-stop-btn").onclick = stopReplay;
+
+// ── init ──
+TMS.onUser(user => {
+  if (user) { loadNetworks().then(() => { loadRunsTable(); loadComparisonsTable(); }); }
+});
+</script>
 {% endblock %}
