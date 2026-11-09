@@ -58,7 +58,7 @@ def test_run_stores_metrics_and_trajectories(client, analyst_h):
     run_id = body["runId"]
     assert client.get(f"{BASE}/runs/{run_id}", headers=analyst_h).json()["metrics"] == body["metrics"]
     assert client.get(f"{BASE}/runs/{run_id}/trajectories", headers=analyst_h).json()["runId"] == run_id
-    assert [r["runId"] for r in client.get(f"{BASE}/runs", headers=analyst_h).json()] == [run_id]
+    assert [r["runId"] for r in client.get(f"{BASE}/runs", headers=analyst_h).json()["runs"]] == [run_id]
 
 
 def test_run_errors(client, analyst_h):

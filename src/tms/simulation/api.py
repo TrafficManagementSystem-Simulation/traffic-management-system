@@ -15,9 +15,10 @@ from sqlalchemy.orm import Session
 from tms.admin import rbac
 from tms.common.db import get_db
 from tms.common.errors import NotFoundError
+from tms.simulation import compare as compare_mod
 from tms.simulation import metrics as metrics_mod
 from tms.simulation.engine import run_simulation
-from tms.simulation.models import SimNetwork, SimRun
+from tms.simulation.models import SimComparison, SimNetwork, SimRun
 from tms.simulation.network import check_or_raise, validate_network
 
 router = APIRouter(prefix="/api/v1/simulation", tags=["simulation"])
@@ -142,3 +143,76 @@ def get_trajectories(run_id: int, db: Session = Depends(get_db),
     if row is None:
         raise NotFoundError(f"Run {run_id} does not exist", code="run_not_found")
     return {"runId": row.id, "trajectories": json.loads(row.trajectories)}
+
+
+# ---------- scenario comparison (TMS-F-012) ----------
+
+class ScenarioIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    greenOverrides: Optional[dict] = None
+    demandScale: Optional[float] = None
+
+
+class CompareIn(BaseModel):
+    networkId: int
+    durationSeconds: int = 3600
+    seed: int = 42
+    demandScale: float = 1.0
+    scenarios: list[ScenarioIn]
+
+
+@router.post("/comparisons", status_code=201)
+def create_comparison(body: CompareIn, db: Session = Depends(get_db),
+                      user: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES))):
+    row = _network_row(db, body.networkId)
+    common = {"duration_seconds": body.durationSeconds, "seed": body.seed, "demand_scale": body.demandScale}
+    scenarios = [{"name": s.name, "green_overrides": s.greenOverrides, "demand_scale": s.demandScale}
+                 for s in body.scenarios]
+    outcome = compare_mod.compare(json.loads(row.topology), scenarios, common)
+    run_ids = {}
+    for item in outcome["scenarios"]:          # every scenario is also kept as a normal run
+        saved = SimRun(network_id=row.id, params=json.dumps(item["params"]), metrics=json.dumps(item["metrics"]),
+                       trajectories=json.dumps(item["trajectories"]), created_by=user.username)
+        db.add(saved)
+        db.flush()
+        run_ids[item["name"]] = saved.id
+    result = {"baseline": outcome["baseline"], "differences": outcome["differences"], "best": outcome["best"],
+              "disclaimer": outcome["disclaimer"],
+              "scenarios": [{"name": i["name"], "runId": run_ids[i["name"]], "params": i["params"],
+                             "metrics": i["metrics"]} for i in outcome["scenarios"]]}
+    comparison = SimComparison(network_id=row.id, params=json.dumps({**common, "scenarios": scenarios}),
+                               result=json.dumps(result), created_by=user.username)
+    db.add(comparison)
+    db.commit()
+    return {"comparisonId": comparison.id, "networkId": row.id, **result}
+
+
+@router.get("/comparisons")
+def list_comparisons(db: Session = Depends(get_db), _: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES))):
+    rows = db.scalars(select(SimComparison).order_by(SimComparison.id.desc())).all()
+    return [{"comparisonId": r.id, "networkId": r.network_id, "createdAt": r.created_at.isoformat(),
+             "baseline": json.loads(r.result)["baseline"],
+             "scenarios": [s["name"] for s in json.loads(r.result)["scenarios"]]} for r in rows]
+
+
+@router.get("/comparisons/{comparison_id}")
+def get_comparison(comparison_id: int, db: Session = Depends(get_db),
+                   _: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES))):
+    row = db.get(SimComparison, comparison_id)
+    if row is None:
+        raise NotFoundError(f"Comparison {comparison_id} does not exist", code="comparison_not_found")
+    return {"comparisonId": row.id, "networkId": row.network_id, **json.loads(row.result)}
+
+
+# ---------- replay (TMS-F-013) ----------
+
+@router.get("/runs/{run_id}/replay")
+def replay(run_id: int, speed: str = "1", db: Session = Depends(get_db),
+           _: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES))):
+    chosen = compare_mod.parse_speed(speed)
+    row = db.get(SimRun, run_id)
+    if row is None:
+        raise NotFoundError(f"Run {run_id} does not exist", code="run_not_found")
+    params = json.loads(row.params)
+    return {"runId": row.id, "networkId": row.network_id, "durationSeconds": params["duration_seconds"],
+            **compare_mod.replay_frames(json.loads(row.trajectories), chosen)}
