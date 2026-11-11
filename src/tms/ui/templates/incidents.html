@@ -2,5 +2,51 @@
 {% block title %}Incidents{% endblock %}
 {% block content %}
 <h2>Incidents</h2>
-<p class="panel">Incident detection, operator alerts and emergency dispatch arrive in Sprint 2.</p>
+<p id="inc-gate" class="panel" role="status">Sign in to see incidents.</p>
+<div id="inc-app" hidden>
+  <div class="row">
+    <label for="status-filter">Show</label>
+    <select id="status-filter"><option value="">All</option><option value="open" selected>Open</option><option value="acknowledged">Acknowledged</option><option value="resolved">Resolved</option></select>
+  </div>
+  <table id="incidents">
+    <caption class="muted">Detected incidents, newest first</caption>
+    <thead><tr><th scope="col">When (UTC)</th><th scope="col">Type</th><th scope="col">Severity</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col">Emergency services</th><th scope="col">Actions</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="muted" id="inc-note"></p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const { api, esc, toast, message, onUser, $ } = TMS;
+  let staff = false;
+  async function load() {
+    const status = $("#status-filter").value;
+    const rows = await api("/api/v1/incidents" + (status ? `?status=${status}` : ""));
+    $("#incidents tbody").innerHTML = rows.map((i) => `<tr>
+      <td>${esc(i.detectedAt.slice(0, 19).replace("T", " "))}</td><td>${esc(i.type.replace("_", " "))}</td><td>${esc(i.severity)}</td>
+      <td>${esc(i.intersectionId)}${i.approach ? ", " + esc(i.approach) + " approach" : ""}${i.lane ? ", lane " + i.lane : ""}</td>
+      <td>${esc(i.status)}</td><td>${i.dispatches.map((d) => `${esc(d.service)}: ${esc(d.status)}`).join("<br>") || "none"}</td>
+      <td>${staff && i.status !== "resolved" ? `<button type="button" class="secondary" data-ack="${i.id}">Acknowledge</button>
+        <button type="button" class="secondary" data-res="${i.id}">Resolve</button>` : ""}</td></tr>`).join("") ||
+      '<tr><td colspan="7" class="muted">No incidents.</td></tr>';
+  }
+  $("#status-filter").addEventListener("change", () => load().catch((e) => toast(message(e), true)));
+  $("#incidents").addEventListener("click", async (event) => {
+    const id = event.target.dataset.ack || event.target.dataset.res;
+    if (!id) return;
+    try {
+      await api(`/api/v1/incidents/${id}/${event.target.dataset.ack ? "acknowledge" : "resolve"}`, { method: "POST" });
+      await load();
+    } catch (err) { toast(message(err), true); }
+  });
+  onUser(async (user) => {
+    $("#inc-app").hidden = !user; $("#inc-gate").hidden = !!user;
+    staff = !!user && ["Operator", "Administrator"].includes(user.role);
+    $("#inc-note").textContent = staff ? "Dispatch emergency services from the operator console alert." : "";
+    if (user) { try { await load(); } catch (err) { toast(message(err), true); } }
+  });
+})();
+</script>
 {% endblock %}
