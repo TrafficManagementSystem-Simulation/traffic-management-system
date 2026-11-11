@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, Float, Integer, LargeBinary, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tms.common import clock
@@ -25,6 +25,7 @@ class Detection(Base):
     approach: Mapped[str | None] = mapped_column(String(10), nullable=True)
     lane: Mapped[int | None] = mapped_column(Integer, nullable=True)
     received_at: Mapped[datetime] = mapped_column(DateTime, default=clock.now)
+    speed_kmh: Mapped[float | None] = mapped_column(Float, nullable=True)   # 0 means stationary (stalled vehicle)
 
 
 class TrafficCount(Base):
@@ -54,3 +55,30 @@ class PedestrianRequest(Base):
     requested_at: Mapped[datetime] = mapped_column(DateTime)
     status: Mapped[str] = mapped_column(String(10), default="pending", index=True)  # pending | served
     served_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Evidence(Base):
+    """Camera images and video that may show number plates (PRJ-SR-003). The content and the plate text
+    are stored only as ciphertext; the columns that stay readable are not identifying."""
+
+    __tablename__ = "evidence"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    intersection_id: Mapped[str] = mapped_column(String(40), index=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime)
+    content_type: Mapped[str] = mapped_column(String(60))
+    source_id: Mapped[str] = mapped_column(String(60))
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    stored_at: Mapped[datetime] = mapped_column(DateTime, default=clock.now)
+
+
+class EvidenceAccess(Base):
+    """One row for every store, retrieval and refused attempt."""
+
+    __tablename__ = "evidence_access_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=clock.now, index=True)
+    evidence_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    username: Mapped[str] = mapped_column(String(60))
+    action: Mapped[str] = mapped_column(String(20))        # stored | retrieved | listed | denied
