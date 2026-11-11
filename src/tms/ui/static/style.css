@@ -1,5 +1,5 @@
 :root {
-  --bg: #ffffff; --text: #111827; --muted: #4b5563; --line: #9ca3af; --accent: #0b5cad; --accent-text: #ffffff;
+  --bg: #ffffff; --text: #111827; --muted: #4b5563; --line: #6b7280; --accent: #0b5cad; --accent-text: #ffffff;
   --good: #166534; --warn: #92400e; --bad: #991b1b; --panel: #f3f4f6;
 }
 @media (prefers-color-scheme: dark) {
