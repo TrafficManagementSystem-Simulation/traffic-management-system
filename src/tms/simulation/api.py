@@ -7,9 +7,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+import io
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tms.admin import rbac
@@ -19,7 +21,7 @@ from tms.simulation import compare as compare_mod
 from tms.simulation import metrics as metrics_mod
 from tms.simulation.engine import run_simulation
 from tms.simulation.models import SimComparison, SimNetwork, SimRun
-from tms.simulation.network import check_or_raise, validate_network
+from tms.simulation.network import NetworkValidationError, check_or_raise, validate_network
 
 router = APIRouter(prefix="/api/v1/simulation", tags=["simulation"])
 SIM_ROLES = (rbac.ANALYST, rbac.ADMINISTRATOR)
@@ -120,11 +122,85 @@ def run(body: RunIn, db: Session = Depends(get_db), user: rbac.CurrentUser = Dep
     return {"runId": saved.id, "networkId": row.id, "params": result["params"], "metrics": metrics}
 
 
+@router.post("/networks/upload", status_code=201)
+def upload_network(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES)),
+):
+    if not (file.filename or "").endswith(".json"):
+        raise HTTPException(status_code=422, detail={"error": "invalid_file_type", "message": "Only .json files are accepted"})
+    raw = file.file.read(512 * 1024 + 1)
+    if len(raw) > 512 * 1024:
+        raise HTTPException(status_code=422, detail={"error": "file_too_large", "message": "File exceeds 512 KB limit"})
+    try:
+        topology = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail={"error": "invalid_json", "message": "File is not valid JSON"})
+    try:
+        topology = check_or_raise(topology)
+    except NetworkValidationError as exc:
+        raise HTTPException(status_code=422, detail={"error": "validation_failure", "message": str(exc)})
+    name = Path(file.filename).stem
+    row = SimNetwork(name=name, topology=json.dumps(topology), created_by=user.username)
+    db.add(row)
+    db.commit()
+    return {"id": row.id, "name": row.name, "nodes": len(topology["nodes"]), "links": len(topology["links"])}
+
+
+@router.delete("/networks/{network_id}", status_code=204)
+def delete_network(
+    network_id: int,
+    db: Session = Depends(get_db),
+    _: rbac.CurrentUser = Depends(rbac.require_role(rbac.ADMINISTRATOR)),
+):
+    row = _network_row(db, network_id)
+    run_count = db.scalar(select(func.count()).select_from(select(SimRun).where(SimRun.network_id == network_id).subquery()))
+    if run_count:
+        raise HTTPException(status_code=409, detail={"error": "network_has_runs", "message": "Network has associated runs; delete them first"})
+    db.delete(row)
+    db.commit()
+
+
 @router.get("/runs")
-def list_runs(db: Session = Depends(get_db), _: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES))):
-    rows = db.scalars(select(SimRun).order_by(SimRun.id.desc())).all()
-    return [{"runId": r.id, "networkId": r.network_id, "createdAt": r.created_at.isoformat(),
-             "metrics": json.loads(r.metrics)} for r in rows]
+def list_runs(
+    networkId: Optional[int] = None,
+    sortBy: str = "newest",
+    page: int = 1,
+    pageSize: int = 50,
+    db: Session = Depends(get_db),
+    _: rbac.CurrentUser = Depends(rbac.require_role(*SIM_ROLES)),
+):
+    pageSize = min(max(1, pageSize), 200)
+    page = max(1, page)
+    q = select(SimRun)
+    if networkId is not None:
+        q = q.where(SimRun.network_id == networkId)
+    metric_sorts = {"delay", "throughput"}
+    if sortBy not in metric_sorts:
+        order = SimRun.id.asc() if sortBy == "oldest" else SimRun.id.desc()
+        total = db.scalar(select(func.count()).select_from(q.subquery()))
+        rows = db.scalars(q.order_by(order).offset((page - 1) * pageSize).limit(pageSize)).all()
+    else:
+        all_rows = db.scalars(q).all()
+        def sort_key(r):
+            m = json.loads(r.metrics)
+            if sortBy == "delay":
+                return m.get("averageDelaySeconds", 0)
+            return -m.get("throughputPerHour", 0)
+        all_rows.sort(key=sort_key)
+        total = len(all_rows)
+        rows = all_rows[(page - 1) * pageSize: page * pageSize]
+    return {
+        "total": total,
+        "page": page,
+        "pageSize": pageSize,
+        "runs": [
+            {"runId": r.id, "networkId": r.network_id, "createdAt": r.created_at.isoformat(),
+             "metrics": json.loads(r.metrics)}
+            for r in rows
+        ],
+    }
 
 
 @router.get("/runs/{run_id}")
