@@ -40,6 +40,7 @@ MODEL_MODULES = (
     "tms.signal_control.models",
     "tms.detection.models",
     "tms.simulation.models",
+    "tms.incident.models",
 )
 
 _engine: Engine | None = None
