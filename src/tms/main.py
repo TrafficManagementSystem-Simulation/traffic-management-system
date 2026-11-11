@@ -25,8 +25,7 @@ log = logging.getLogger("tms")
 
 # Each module owner's API. A module that has not been merged yet is skipped, so the shared
 # skeleton and every person's pull request can be merged one at a time with CI green.
-MODULE_ROUTERS = ("tms.admin.api", "tms.detection.api", "tms.signal_control.api", "tms.simulation.api")
-
+MODULE_ROUTERS = ("tms.admin.api", "tms.detection.api", "tms.signal_control.api", "tms.simulation.api", "tms.incident.api")
 
 def available(module: str) -> bool:
     """True if ``module`` exists in this checkout."""
@@ -43,6 +42,10 @@ def _tick_all() -> None:
     with db.session_scope() as session:
         for item in config_service.list_intersections(session):
             controller.tick(session, item["id"], clock.now())
+            if available("tms.incident.service"):
+                from tms.incident import service as incident_service
+                incident_service.scan(session, item["id"], clock.now())
+            
 
 
 async def _tick_loop() -> None:
@@ -79,6 +82,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Traffic Management System (Simulation)", version="0.1.0-sprint1", lifespan=lifespan)
     app.state.settings = settings
+    # --- ADDED: wire up the emergency-dispatch service if the incident module is present ---
+    if available("tms.incident.dispatch"):
+        from tms.incident.dispatch import LoopbackEmergencyService
+        app.state.emergency_service = LoopbackEmergencyService()
+    # --- END ADDED ---
     register_handlers(app)
     for name in MODULE_ROUTERS:
         if available(name):

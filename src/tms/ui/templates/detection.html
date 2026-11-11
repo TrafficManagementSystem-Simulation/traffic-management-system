@@ -19,7 +19,7 @@
   <section aria-labelledby="counts-h">
     <h2 id="counts-h">Latest counts per lane and class</h2>
     <table>
-      <thead><tr><th>Interval start (UTC)</th><th>Approach</th><th>Lane</th><th>Class</th><th>Vehicles</th></tr></thead>
+      <thead><tr><th scope="col">Interval start (UTC)</th><th scope="col">Approach</th><th scope="col">Lane</th><th scope="col">Class</th><th scope="col">Vehicles</th></tr></thead>
       <tbody id="counts-body"></tbody>
     </table>
     <p id="empty" class="muted" hidden>No detections yet. Start the synthetic feed:</p>
@@ -55,7 +55,7 @@
     try {
       const d = await TMS.api(`/api/v1/intersections/${encodeURIComponent(id)}/density`);
       const approaches = Object.keys(d.vehiclesPerMinute);
-      $("#density-head").innerHTML = "<tr>" + approaches.map((a) => `<th>${esc(a)}</th>`).join("") + "</tr>";
+      $("#density-head").innerHTML = "<tr>" + approaches.map((a) => `<th scope="col">${esc(a)}</th>`).join("") + "</tr>";
       $("#density-body").innerHTML = "<tr>" + approaches.map((a) => `<td>${d.vehiclesPerMinute[a].toFixed(1)}</td>`).join("") + "</tr>";
       const peds = await TMS.api(`/api/v1/intersections/${encodeURIComponent(id)}/pedestrian-requests`);
       $("#peds").textContent = peds.length;

@@ -39,12 +39,12 @@
 
   <section class="panel" aria-labelledby="alerts-h">
     <h2 id="alerts-h" style="margin-top:0">Incident alerts</h2>
-    <p class="muted">Incident alerts will appear here in Sprint 2.</p>
+    <div id="alerts" role="alert" aria-live="assertive"><p class="muted">No open incidents.</p></div>
   </section>
 
   <section aria-labelledby="audit-h">
     <h2 id="audit-h">Recent audit log</h2>
-    <table><thead><tr><th>Time (UTC)</th><th>Event</th><th>Source</th><th>Who</th><th>Details</th></tr></thead>
+    <table><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Event</th><th scope="col">Source</th><th scope="col">Who</th><th scope="col">Details</th></tr></thead>
     <tbody id="audit-body"></tbody></table>
   </section>
 </div>
@@ -88,7 +88,7 @@
       $("#peds").textContent = s.pedestriansWaiting;
       $("#plan-version").textContent = s.planVersion;
       const phases = Object.keys(s.plan.green);
-      $("#plan-head").innerHTML = "<tr>" + phases.map((p) => `<th>${esc(p)} green (s)</th>`).join("") + "<th>Yellow (s)</th><th>All-red (s)</th></tr>";
+      $("#plan-head").innerHTML = "<tr>" + phases.map((p) => `<th scope="col">${esc(p)} green (s)</th>`).join("") + "<th scope=\"col\">Yellow (s)</th><th scope=\"col\">All-red (s)</th></tr>";
       $("#plan-body").innerHTML = "<tr>" + phases.map((p) => `<td>${s.plan.green[p]}</td>`).join("") + `<td>${s.plan.yellow}</td><td>${s.plan.all_red}</td></tr>`;
       $("#next-plan").textContent = s.nextPlan ? "Next plan waiting: " + JSON.stringify(s.nextPlan.green) + " (applies at the next green)" : "";
       const sel = $("#ov-phase");
@@ -96,9 +96,33 @@
         sel.innerHTML = phases.concat(["ALL_RED"]).map((p) => `<option>${esc(p)}</option>`).join("");
         sel.dataset.for = phases.join(",");
       }
+      refreshAlerts();
       const log = await TMS.api(`/api/v1/intersections/${encodeURIComponent(iid())}/audit-log?limit=12`).catch(() => []);
       $("#audit-body").innerHTML = log.map((e) => `<tr><td>${esc(e.timestamp.slice(11, 19))}</td><td>${esc(e.event)}</td><td>${esc(e.source)}</td><td>${esc(e.actor || "")}</td><td>${esc(summary(e.details))}</td></tr>`).join("");
     } catch (err) { TMS.toast(TMS.message(err), true); clearInterval(timer); }
+  }
+
+  async function refreshAlerts() {
+    const rows = await TMS.api("/api/v1/alerts?openOnly=true").catch(() => []);
+    $("#alerts").innerHTML = rows.length ? rows.map((a) => `<div class="panel">
+      <strong>${esc(a.message)}</strong> <span class="muted">${esc(a.createdAt.slice(11, 19))} UTC</span><br>
+      <label>Notify <select data-service="${a.incidentId}" aria-label="Emergency service for incident ${a.incidentId}"><option>police</option><option>ambulance</option><option>fire</option></select></label>
+      <button type="button" data-dispatch="${a.incidentId}">Dispatch</button>
+      <button type="button" class="secondary" data-ack="${a.incidentId}">Acknowledge</button></div>`).join("") : '<p class="muted">No open incidents.</p>';
+  }
+
+  async function alertAction(event) {
+    const dispatch = event.target.dataset.dispatch, ack = event.target.dataset.ack;
+    try {
+      if (dispatch) {
+        const service = document.querySelector(`[data-service="${dispatch}"]`).value;
+        const out = await TMS.api(`/api/v1/incidents/${dispatch}/dispatch`, { method: "POST", body: { service } });
+        TMS.toast(`${service} notified (${out.reference})`);
+      } else if (ack) {
+        await TMS.api(`/api/v1/incidents/${ack}/acknowledge`, { method: "POST" });
+      } else return;
+      refreshAlerts();
+    } catch (err) { TMS.toast(TMS.message(err), true); }
   }
 
   function summary(d) {
@@ -111,6 +135,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     $("#intersection").addEventListener("change", refresh);
+    $("#alerts").addEventListener("click", alertAction);
     $("#recompute").addEventListener("click", async () => {
       try {
         const r = await TMS.api(`/api/v1/intersections/${encodeURIComponent(iid())}/adaptive/recompute`, { method: "POST" });

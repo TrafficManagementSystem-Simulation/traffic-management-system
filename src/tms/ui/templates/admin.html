@@ -7,7 +7,7 @@
 <div id="admin" hidden>
   <section aria-labelledby="users-h">
     <h2 id="users-h">Users and roles</h2>
-    <table><thead><tr><th>User</th><th>Role</th><th>Change role</th></tr></thead><tbody id="users-body"></tbody></table>
+    <table><thead><tr><th scope="col">User</th><th scope="col">Role</th><th scope="col">Change role</th></tr></thead><tbody id="users-body"></tbody></table>
     <form id="user-form" class="row">
       <label>Username <input id="u-name" required maxlength="60"></label>
       <label>Password (8+ characters) <input id="u-pass" type="password" required minlength="8"></label>
@@ -42,7 +42,7 @@
 
   <section aria-labelledby="sec-h">
     <h2 id="sec-h">Security log (latest 30)</h2>
-    <table><thead><tr><th>Time (UTC)</th><th>User</th><th>Event</th><th>Details</th></tr></thead><tbody id="sec-body"></tbody></table>
+    <table><thead><tr><th scope="col">Time (UTC)</th><th scope="col">User</th><th scope="col">Event</th><th scope="col">Details</th></tr></thead><tbody id="sec-body"></tbody></table>
   </section>
 </div>
 {% endblock %}
