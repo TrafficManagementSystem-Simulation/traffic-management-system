@@ -105,3 +105,10 @@ def get_db() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+
+def get_engine() -> Engine:
+    if _engine is None:
+        raise RuntimeError("Call db.configure(url) first")
+    return _engine
