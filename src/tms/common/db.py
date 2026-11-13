@@ -66,6 +66,10 @@ def configure(database_url: str) -> Engine:
     _session_factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=True)
     return engine
 
+def get_engine() -> Engine:
+    if _engine is None:
+        raise RuntimeError("Call db.configure(url) first")
+    return _engine
 
 def init_db() -> None:
     if _engine is None:
@@ -108,7 +112,3 @@ def get_db() -> Iterator[Session]:
 
 
 
-def get_engine() -> Engine:
-    if _engine is None:
-        raise RuntimeError("Call db.configure(url) first")
-    return _engine
