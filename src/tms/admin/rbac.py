@@ -15,8 +15,10 @@ from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from tms.admin import mfa
 from tms.admin.models import AuthToken, SecurityLog, User
 from tms.common import clock
+from tms.common.config import get_settings
 from tms.common.db import get_db
 from tms.common.errors import AuthError, CommandError, ForbiddenError
 
@@ -42,6 +44,7 @@ class CurrentUser:
     id: int
     username: str
     role: str
+    mfa_verified: bool = False
 
 
 # ---------- passwords and tokens ----------
@@ -101,16 +104,34 @@ def set_user_role(db: Session, username: str, role: str) -> User:
     return user
 
 
-def login(db: Session, username: str, password: str, hours: int = TOKEN_HOURS) -> tuple[str, User]:
+def login(db: Session, username: str, password: str, otp: str | None = None, hours: int = TOKEN_HOURS) -> tuple[str, User, bool]:
+    """Return (token, user, mfa_verified). If user has MFA enrolled and no OTP provided, raises AuthError with code 'mfa_required'.
+    If OTP provided but invalid, raises AuthError with code 'mfa_invalid'."""
+    settings = get_settings()
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not user.active or not verify_password(password, user.password_hash):
         log_security(db, username or None, "login_failed", "Invalid username or password")
         raise AuthError("Invalid username or password", code="invalid_credentials")
+
+    # Check if MFA is required for this user
+    mfa_verified = False
+    if settings.require_mfa and user.mfa_secret:
+        if otp is None:
+            log_security(db, user.username, "login_mfa_missing", "MFA code required")
+            raise AuthError("Multi-factor authentication required", code="mfa_required")
+        step = mfa.verify(user.mfa_secret, otp, clock.now(), user.mfa_last_step)
+        if step is None:
+            log_security(db, user.username, "login_mfa_failed", "Invalid MFA code")
+            raise AuthError("Invalid MFA code", code="mfa_invalid")
+        mfa_verified = True
+        user.mfa_last_step = step
+        db.commit()
+
     token = secrets.token_urlsafe(32)
-    db.add(AuthToken(token_hash=_token_hash(token), user_id=user.id, expires_at=clock.now() + timedelta(hours=hours)))
+    db.add(AuthToken(token_hash=_token_hash(token), user_id=user.id, expires_at=clock.now() + timedelta(hours=hours), mfa_verified=mfa_verified))
     db.commit()
-    log_security(db, user.username, "login_ok", f"role={user.role}")
-    return token, user
+    log_security(db, user.username, "login_ok", f"role={user.role}, mfa={mfa_verified}")
+    return token, user, mfa_verified
 
 
 def authenticate_token(db: Session, token: str | None) -> CurrentUser | None:
@@ -122,7 +143,7 @@ def authenticate_token(db: Session, token: str | None) -> CurrentUser | None:
     user = db.get(User, row.user_id)
     if user is None or not user.active:
         return None
-    return CurrentUser(id=user.id, username=user.username, role=user.role)
+    return CurrentUser(id=user.id, username=user.username, role=user.role, mfa_verified=row.mfa_verified)
 
 
 def _bearer(request: Request) -> str | None:
@@ -147,3 +168,12 @@ def require_role(*roles: str):
         return user
 
     return dependency
+
+
+def require_mfa(request: Request, db: Session = Depends(get_db), user: CurrentUser = Depends(require_role())) -> CurrentUser:
+    """Dependency that requires the session to have MFA verified (for signal-state changes)."""
+    settings = get_settings()
+    if settings.require_mfa and not user.mfa_verified:
+        log_security(db, user.username, "access_denied", f"{request.method} {request.url.path} needs MFA")
+        raise ForbiddenError("Multi-factor authentication required for this action", code="mfa_required")
+    return user

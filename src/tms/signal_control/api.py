@@ -32,7 +32,7 @@ def signal_state(intersection_id: str, db: Session = Depends(get_db),
 
 @router.post("/{intersection_id}/signal-command")
 def signal_command(intersection_id: str, body: SignalCommand, db: Session = Depends(get_db),
-                   user: rbac.CurrentUser = Depends(rbac.require_role(rbac.OPERATOR))):
+                   user: rbac.CurrentUser = Depends(rbac.require_mfa)):
     config_service.get_intersection_config(db, intersection_id)
     if body.mode == "manual":
         if not body.phase or body.duration is None:
@@ -46,14 +46,14 @@ def signal_command(intersection_id: str, body: SignalCommand, db: Session = Depe
 
 @router.post("/{intersection_id}/signal-control/tick")
 def tick(intersection_id: str, db: Session = Depends(get_db),
-         _: rbac.CurrentUser = Depends(rbac.require_role(rbac.OPERATOR, rbac.ADMINISTRATOR))):
+         _: rbac.CurrentUser = Depends(rbac.require_mfa)):
     config_service.get_intersection_config(db, intersection_id)
     return controller.view_state(db, intersection_id, clock.now())
 
 
 @router.post("/{intersection_id}/adaptive/recompute")
 def recompute(intersection_id: str, db: Session = Depends(get_db),
-              _: rbac.CurrentUser = Depends(rbac.require_role(rbac.OPERATOR, rbac.ADMINISTRATOR))):
+              _: rbac.CurrentUser = Depends(rbac.require_mfa)):
     config_service.get_intersection_config(db, intersection_id)
     return controller.recompute_plan(db, intersection_id, clock.now())
 
