@@ -111,4 +111,8 @@ def get_db() -> Iterator[Session]:
         session.close()
 
 
-
+def get_engine() -> Engine:
+    """Return the current SQLAlchemy engine (for backup/restore operations)."""
+    if _engine is None:
+        raise RuntimeError("Call db.configure(url) first")
+    return _engine

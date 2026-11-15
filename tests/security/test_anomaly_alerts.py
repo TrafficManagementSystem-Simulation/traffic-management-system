@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from tms.admin import rbac
+from tms.admin import mfa, rbac
 from tms.common import clock
+from tms.common.seed import DEMO_MFA_SECRETS
 from tms.incident import security_monitor as monitor
 from tms.signal_control import controller, override
 
@@ -63,7 +64,7 @@ def test_administrator_access_in_working_hours_and_operator_access_at_night_are_
     rbac.login(session, "admin", "admin12345")
     assert monitor.scan(session, clock.now()) == []                                  # 09:00
     clock.freeze(datetime(2026, 10, 19, 23, 30))
-    rbac.login(session, "operator", "operator123")
+    rbac.login(session, "operator", "operator123", otp=mfa.totp(DEMO_MFA_SECRETS["operator"], clock.now()))
     assert monitor.scan(session, clock.now()) == []
 
 

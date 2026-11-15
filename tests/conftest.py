@@ -55,15 +55,21 @@ def session(app):
     database.close()
 
 
-def sign_in(client: TestClient, username: str, password: str) -> dict:
-    response = client.post("/api/v1/auth/login", json={"username": username, "password": password})
+def sign_in(client: TestClient, username: str, password: str, otp: str | None = None) -> dict:
+    body = {"username": username, "password": password}
+    if otp is not None:
+        body["otp"] = otp
+    response = client.post("/api/v1/auth/login", json=body)
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}
 
 
 @pytest.fixture
 def operator_h(client):
-    return sign_in(client, "operator", "operator123")
+    from tms.admin import mfa
+    from tms.common import clock
+    from tms.common.seed import DEMO_MFA_SECRETS
+    return sign_in(client, "operator", "operator123", otp=mfa.totp(DEMO_MFA_SECRETS["operator"], clock.now()))
 
 
 @pytest.fixture
