@@ -12,9 +12,11 @@ from tms.admin import rbac
 from tms.common import clock
 from tms.common.db import get_db
 from tms.infra import backup, uptime
+from tms.infra.interop_api import router as interop_router
 from tms.infra.models import MaintenanceWindow
 
 router = APIRouter(prefix="/api/v1", tags=["platform"])
+router.include_router(interop_router)
 
 
 class WindowIn(BaseModel):

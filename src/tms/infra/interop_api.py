@@ -10,7 +10,7 @@ from tms.common.db import get_db
 from tms.infra.interop_contract import API_VERSION
 from tms.signal_control import controller
 
-router = APIRouter(prefix="/api/v1", tags=["interoperability"])
+router = APIRouter(tags=["interoperability"])
 
 
 @router.get("/meta")

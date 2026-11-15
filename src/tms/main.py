@@ -25,7 +25,7 @@ log = logging.getLogger("tms")
 
 # Each module owner's API. A module that has not been merged yet is skipped, so the shared
 # skeleton and every person's pull request can be merged one at a time with CI green.
-MODULE_ROUTERS = ("tms.admin.api", "tms.detection.api", "tms.signal_control.api", "tms.simulation.api", "tms.incident.api")
+MODULE_ROUTERS = ("tms.admin.api", "tms.detection.api", "tms.signal_control.api", "tms.simulation.api", "tms.incident.api", "tms.infra.api")
 
 def available(module: str) -> bool:
     """True if ``module`` exists in this checkout."""

@@ -30,6 +30,10 @@ INT_LIMITS: dict[str, tuple[int, int]] = {
     "density_window_minutes": (1, 30),
 }
 
+# latitude/longitude bounds
+LAT_LIMITS = (-90.0, 90.0)
+LON_LIMITS = (-180.0, 180.0)
+
 
 def validate_config(config: dict) -> dict:
     """Return a cleaned copy of ``config`` or raise ValidationFailure listing every problem."""
@@ -45,6 +49,21 @@ def validate_config(config: dict) -> dict:
             problems.append(f"{key} must be a whole number")
         elif not low <= value <= high:
             problems.append(f"{key} must be between {low} and {high}")
+
+    # latitude/longitude validation
+    lat = cfg.get("latitude")
+    if lat is not None:
+        if isinstance(lat, bool) or not isinstance(lat, (int, float)):
+            problems.append("latitude must be a number")
+        elif not LAT_LIMITS[0] <= lat <= LAT_LIMITS[1]:
+            problems.append(f"latitude must be between {LAT_LIMITS[0]} and {LAT_LIMITS[1]}")
+
+    lon = cfg.get("longitude")
+    if lon is not None:
+        if isinstance(lon, bool) or not isinstance(lon, (int, float)):
+            problems.append("longitude must be a number")
+        elif not LON_LIMITS[0] <= lon <= LON_LIMITS[1]:
+            problems.append(f"longitude must be between {LON_LIMITS[0]} and {LON_LIMITS[1]}")
 
     phases = cfg.get("phases")
     if not isinstance(phases, list) or len(phases) < 2 or len(set(phases)) != len(phases) \
