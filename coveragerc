@@ -1,0 +1,13 @@
+[run]
+source = src/tms
+branch = True
+
+[report]
+show_missing = False
+skip_empty = True
+
+[html]
+directory = reports/coverage-html
+
+[xml]
+output = reports/coverage.xml
